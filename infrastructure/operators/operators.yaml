@@ -42,6 +42,10 @@ spec:
       sourceRef: {kind: HelmRepository, name: kyverno, namespace: flux-system}
   install: {crds: CreateReplace}
   upgrade: {crds: CreateReplace, remediation: {retries: 2}}
+  values:
+    # Not used by the demo policies; saves CPU on a laptop-sized cluster.
+    reportsController: {enabled: false}
+    cleanupController: {enabled: false}
 ---
 apiVersion: v1
 kind: Namespace
