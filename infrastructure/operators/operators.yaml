@@ -23,8 +23,6 @@ spec:
       enabled: true
       servicemonitor:
         enabled: false
-        targetPort: 9402
-        path: /metrics
 ---
 apiVersion: v1
 kind: Namespace
