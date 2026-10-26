@@ -53,6 +53,7 @@ spec:
         kubectl -n velero get backups.velero.io drill-{{ execution.id }} -o json | jq '.status' | tee /data/backup-status.json
         kubectl -n velero get podvolumebackups -l velero.io/backup-name=drill-{{ execution.id }} 2>/dev/null || true
         [ "$(jq -r .phase /data/backup-status.json)" = Completed ] \
+          || { kubectl -n velero exec deploy/velero -c velero -- /velero backup describe drill-{{ execution.id }} --details | sed -n '/^Errors:/,/^Namespaces:/p' >&2 || true; false; } \
           || fail "Velero backup ended $(jq -r .phase /data/backup-status.json): $(jq -c '{failureReason, validationErrors, errors, warnings}' /data/backup-status.json)"
         ok "backup Completed: $(jq -r '.progress.itemsBackedUp' /data/backup-status.json) items"
 
@@ -80,6 +81,7 @@ spec:
                   - {operation: add, path: "/spec/externalClusters", value: '$ORIGIN'}
                   - {operation: replace, path: "/spec/backup/barmanObjectStore", value: '$DRILL'}
                   - {operation: replace, path: "/spec/instances", value: "1"}
+                  - {operation: remove, path: "/spec/postgresql/synchronous"}
               - conditions: {groupResource: deployments.apps, resourceNameRegex: "^todo$"}
                 patches:
                   - {operation: replace, path: "/spec/replicas", value: "1"}
@@ -100,7 +102,10 @@ spec:
         finished() { kubectl -n velero get restore drill-{{ execution.id }} -o json | jq -e '.status.phase | test("^(Completed|PartiallyFailed|Failed|FailedValidation)$")'; }
         wait_until 300 "Velero restore finished" finished
         kubectl -n velero get restore drill-{{ execution.id }} -o json | jq '.status' | tee /data/restore-status.json
-        [ "$(jq -r .phase /data/restore-status.json)" = Completed ] || fail "restore ended $(jq -r .phase /data/restore-status.json)"
+        if [ "$(jq -r .phase /data/restore-status.json)" != Completed ]; then
+          kubectl -n velero exec deploy/velero -c velero -- /velero restore describe drill-{{ execution.id }} --details | sed -n '/^Errors:/,/^Backup:/p' >&2
+          fail "restore ended $(jq -r .phase /data/restore-status.json)"
+        fi
 
     - name: Restored app is healthy, has the data, and is still meshed and policed
       shell: |
