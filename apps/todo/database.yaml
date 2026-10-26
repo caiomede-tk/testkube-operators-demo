@@ -4,6 +4,10 @@ metadata: {name: todo-db, namespace: todo}
 spec:
   instances: 3
   imageName: ghcr.io/cloudnative-pg/postgresql:17.9-system-bookworm
+  # Velero restores the Cluster spec; everything CNPG generates (pods, PVCs, services, secrets) is
+  # left out, because CNPG refuses to adopt restored copies it does not own. Data comes from CNPG backups.
+  inheritedMetadata:
+    labels: {velero.io/exclude-from-backup: "true"}
   storage: {size: 1Gi}
   resources:
     requests: {cpu: 50m, memory: 128Mi}
