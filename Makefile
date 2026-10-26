@@ -31,8 +31,16 @@ status: ## Show what Flux has reconciled
 	flux get kustomizations
 	kubectl get helmreleases -A
 
-test: ## Run the whole operators suite and follow it
-	$(TK) run testworkflow operators-suite -f
+SUITE := flux cert-manager linkerd kyverno external-secrets cloudnative-pg velero todo-e2e
+
+# One at a time: the workflows deliberately disturb the shared environment (failover, rotation, restore).
+# (Testkube OSS standalone has no `execute` step, so the suite is driven from here.)
+test: ## Run every workflow in order and summarise (full logs in .kind/logs/)
+	@mkdir -p .kind/logs; rc=0; for w in $(SUITE); do \
+	  printf '%-18s ' $$w; \
+	  if $(TK) run testworkflow $$w -f > .kind/logs/$$w.log 2>&1; then echo PASSED; else echo FAILED; rc=1; \
+	    perl -pe 's/\e\[[0-9;]*m//g' .kind/logs/$$w.log | grep -a 'FINDING' | sed 's/^/    /'; fi; \
+	done; exit $$rc
 
 run: ## Run one workflow: make run W=cloudnative-pg
 	$(TK) run testworkflow $(W) -f

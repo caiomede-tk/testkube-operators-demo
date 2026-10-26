@@ -44,23 +44,3 @@ spec:
         shell: npm i --no-save --silent @playwright/test@1.56.1 && npx playwright test
       artifacts:
         paths: ["/data/artifacts/**"]
----
-# Runs every operator test, one at a time (they deliberately disturb the shared environment).
-apiVersion: testworkflows.testkube.io/v1
-kind: TestWorkflow
-metadata:
-  name: operators-suite
-  namespace: testkube
-spec:
-  steps:
-    - execute:
-        parallelism: 1
-        workflows:
-          - name: flux
-          - name: cert-manager
-          - name: linkerd
-          - name: kyverno
-          - name: external-secrets
-          - name: cloudnative-pg
-          - name: velero
-          - name: todo-e2e

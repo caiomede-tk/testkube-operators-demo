@@ -62,9 +62,16 @@ Every command uses `.kind/kubeconfig`, so your global kubeconfig is untouched.
 | `todo-e2e` | Playwright through the HTTPS UI: add, complete, delete. |
 
 ```sh
-make test                  # operators-suite: all of the above, one at a time
+make test                  # all of the above, one at a time, with a PASSED/FAILED summary
 make run W=cloudnative-pg  # a single workflow
 ```
+
+### What the workflows caught while this demo was being built
+
+These are good stories for the talk, because each one happened while every operator reported healthy:
+
+- **The business metric was never exported.** The CNPG exporter queries as `pg_monitor`, which could not read the app's table. The Cluster stayed "healthy" the whole time. Fixed with `ALTER DEFAULT PRIVILEGES … GRANT SELECT … TO pg_monitor` in `postInitApplicationSQL`.
+- **The Velero restore "succeeded" but the database never came back.** Velero restored CNPG's generated Services and Secrets, and CNPG refuses to adopt objects it does not own. Fixed by labelling everything CNPG generates `velero.io/exclude-from-backup` (`inheritedMetadata`). Velero now carries the declarative state, and CNPG backups carry the data.
 
 ## Demo script
 
