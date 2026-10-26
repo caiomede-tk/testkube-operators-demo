@@ -35,6 +35,12 @@ spec:
         EOF
         completed() { [ "$(kubectl -n todo get backups.postgresql.cnpg.io velero-{{ execution.id }} -o jsonpath='{.status.phase}')" = completed ]; }
         wait_until 300 "CNPG base backup completed" completed
+        # A recovery needs the WAL up to the backup's end; make sure it is in the object store.
+        endwal=$(kubectl -n todo get backups.postgresql.cnpg.io velero-{{ execution.id }} -o jsonpath='{.status.endWal}')
+        primary=$(kubectl -n todo get cluster todo-db -o jsonpath='{.status.currentPrimary}')
+        kubectl -n todo exec "$primary" -c postgres -- psql -tAc 'select pg_switch_wal()' >/dev/null
+        archived() { a=$(kubectl -n todo get cluster todo-db -o jsonpath='{.status.lastArchivedWAL}'); [ "$(printf '%s\n%s\n' "$endwal" "$a" | sort | tail -1)" = "$a" ]; }
+        wait_until 300 "WAL $endwal archived" archived
 
     - name: Back up the todo namespace
       shell: |
