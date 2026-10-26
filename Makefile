@@ -5,6 +5,8 @@ GITHUB_REPO  ?= testkube-operators-demo
 APP_IMAGE    := todo:v1.0.0
 
 export KUBECONFIG := $(CURDIR)/.kind/kubeconfig
+# Demo-local Testkube CLI config (.kind/.testkube), so your own CLI contexts stay untouched.
+TK := HOME=$(CURDIR)/.kind testkube
 
 .PHONY: help kind-up app-image bootstrap status test run app upgrade kind-down
 
@@ -15,6 +17,7 @@ kind-up: ## Create the kind cluster (kubeconfig in .kind/, your global config is
 	@mkdir -p .kind
 	kind get clusters | grep -qx $(CLUSTER) || kind create cluster --config kind.yaml --name $(CLUSTER)
 	kind get kubeconfig --name $(CLUSTER) > $(KUBECONFIG)
+	$(TK) set context --kubeconfig --namespace testkube >/dev/null
 
 app-image: ## Build the ToDo image and load it into kind
 	docker build -t $(APP_IMAGE) app
@@ -29,10 +32,10 @@ status: ## Show what Flux has reconciled
 	kubectl get helmreleases -A
 
 test: ## Run the whole operators suite and follow it
-	testkube run testworkflow operators-suite -f
+	$(TK) run testworkflow operators-suite -f
 
 run: ## Run one workflow: make run W=cloudnative-pg
-	testkube run testworkflow $(W) -f
+	$(TK) run testworkflow $(W) -f
 
 app: ## Open the ToDo app on https://localhost:8443
 	kubectl -n todo port-forward svc/todo 8443:443

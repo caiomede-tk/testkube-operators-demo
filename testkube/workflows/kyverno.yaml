@@ -76,7 +76,8 @@ spec:
         # Re-apply the live policies (server-side dry run) and collect any warnings the API returns.
         warn=$(kubectl get clusterpolicies -o json \
           | jq 'del(.items[].status, .items[].metadata.managedFields, .items[].metadata.resourceVersion, .items[].metadata.uid, .items[].metadata.generation, .items[].metadata.creationTimestamp)' \
-          | kubectl apply --dry-run=server -f - 2>&1 >/dev/null | grep -i warning || true)
+          | kubectl apply --server-side --force-conflicts --field-manager=deprecation-check --dry-run=server -f - 2>&1 >/dev/null \
+          | grep '^Warning:' || true)
         [ -z "$dep$warn" ] || fail "our policies ($kinds) are written against a deprecated API:
         ${dep}
         ${warn}"
