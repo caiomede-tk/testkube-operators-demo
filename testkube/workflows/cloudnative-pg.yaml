@@ -62,15 +62,17 @@ spec:
         after=$(awk -v t=$t0 '$1 > t + '"$failover"' {n++} END {print n+0}' /data/acked)
         echo "acknowledged writes: $total (after failover: $after); new primary: $(kubectl -n todo get cluster todo-db -o jsonpath='{.status.currentPrimary}')"
         [ "$after" -gt 0 ] || fail "the app never recovered its writes after failover"
-        api $APP/api/todos | jq -r '.[].id' | sort -n > /tmp/present
-        awk '{print $2}' /data/acked | sort -n > /tmp/acked
-        lost=$(comm -23 /tmp/acked /tmp/present | tr '\n' ' ')
-        [ -z "$lost" ] || fail "acknowledged writes LOST in failover: $lost"
-        ok "no acknowledged write lost"
         [ "$failover" -le {{ config.maxFailoverSeconds }} ] || fail "failover took ${failover}s (limit {{ config.maxFailoverSeconds }}s)"
         ok "failover took ${failover}s (limit {{ config.maxFailoverSeconds }}s)"
         healthy() { kubectl -n todo get cluster todo-db -o json | jq -e '.status.phase=="Cluster in healthy state" and .status.readyInstances==.spec.instances'; }
         wait_until 300 "old primary rejoined as a replica" healthy
+        # Durability is checked on the new primary itself, independent of app routing.
+        primary=$(kubectl -n todo get cluster todo-db -o jsonpath='{.status.currentPrimary}')
+        ids=$(awk '{printf "%s%s", sep, $2; sep=","}' /data/acked)
+        lost=$(kubectl -n todo exec "$primary" -c postgres -- psql -d todo -tAc \
+          "select string_agg(i::text, ' ') from unnest(array[$ids]::bigint[]) i where not exists (select 1 from todos where id = i)")
+        [ -z "$lost" ] || fail "acknowledged writes LOST in failover: $lost"
+        ok "all $total acknowledged writes are on the new primary $primary"
 
     - name: A fresh backup restores into a new cluster with the same data
       shell: |
