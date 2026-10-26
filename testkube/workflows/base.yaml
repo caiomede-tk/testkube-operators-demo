@@ -42,6 +42,13 @@ spec:
               if [ "$got" = "$want" ] && [ "$ready" = True ]; then ok "$1/$2 runs $got, as declared in Git"; return 0; fi
               # Flux already tried the desired version and gave up: no point waiting.
               if [ "$tried" = "$want" ] && [ "$ready" = False ]; then break; fi
+              # Flux never even rendered the new version into this HelmRelease: something upstream blocks it.
+              spec=$(echo "$hr" | jq -r '.spec.chart.spec.version')
+              if [ "$spec" != "$want" ] && [ "$(( end - $(date +%s) ))" -lt 480 ]; then
+                echo "  Flux has not applied the new version to $1/$2; the Kustomizations are:" >&2
+                kubectl -n flux-system get kustomizations -o json | jq -r '.items[] | "    \(.metadata.name): \(.status.conditions[]? | select(.type=="Ready") | .message)"' >&2
+                break
+              fi
               [ "$(date +%s)" -lt "$end" ] || break
               echo "… $1/$2: deployed=$got desired=$want ready=$ready, waiting for Flux"; sleep 10
             done
