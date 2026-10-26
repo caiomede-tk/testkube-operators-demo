@@ -78,25 +78,32 @@ These are good stories for the talk, because each one happened while every opera
 1. **The platform.** Run `make status` and show `clusters/kind/operator-versions.yaml`: everything is from Git and pinned old.
 2. **The app.** Run `make app`, then add a few todos. Point out the padlock (cert-manager), the meshed pods (`kubectl -n todo get pods` shows 2/2) and the Kyverno-labelled namespace.
 3. **Green baseline.** Run `make test`. Walk through one workflow log (e.g. `cloudnative-pg`: failover time, zero lost writes).
-4. **The upgrade.** Run `make upgrade`, which opens a PR that changes one file. Merge it, then run `flux reconcile ks flux-system --with-source`.
-5. **Run the same tests again.** Run `make test`. Expected findings (all from real upstream changes):
+4. **The upgrade.** Run `make upgrade`, which opens a PR that changes one file. Merge it, then run `flux reconcile source git flux-system`.
+   Within about 5 minutes, CNPG, External Secrets, Kyverno and the Linkerd CRDs are upgraded. cert-manager is rejected.
+5. **Act 1: run the same tests again** with `make test`. These results were verified on kind:
 
-| Workflow | What goes red | Why (upstream change) |
+| Workflow | Result | Why (real upstream change) |
 |---|---|---|
-| `flux`, `cert-manager` | cert-manager stays on v1.18.6; the HelmRelease fails | v1.21 removed the Helm values `prometheus.servicemonitor.targetPort/path`. The chart schema now rejects our values, so the upgrade never happens. |
-| `velero` | Velero server/backup fails | v1.17 removed the Restic uploader. Our `uploaderType: restic` is no longer valid. |
-| `cloudnative-pg` | `cnpg_todo_items_open` disappears while the cluster stays "healthy" | v1.28.3/v1.29.1: the metrics exporter no longer runs as superuser (`pg_monitor` only), so custom queries on app tables fail silently. |
-| `kyverno` | "policies written against a deprecated API" | v1.19 deprecates `ClusterPolicy` (removal planned in v1.20). Upgrading one more time would break admission. |
-| `linkerd`, `external-secrets`, `todo-e2e` | stay green | These upgrades are safe for this app. That is useful information too. |
+| `flux` | ❌ cert-manager, linkerd-control-plane and velero are not at the Git version | One rejected upgrade blocks the dependent layers (`operators` → `configs` → `platform`), so Linkerd's control plane and Velero are never even attempted. |
+| `cert-manager` | ❌ still v1.18.6 | v1.21 removed the Helm values `prometheus.servicemonitor.targetPort/path`. The chart schema rejects our values. |
+| `linkerd` | ❌ control plane still on edge-26.7.2 | Blocked behind cert-manager (see `flux`). |
+| `kyverno` | ❌ "ClusterPolicy is deprecated … migrate to ValidatingPolicy" | v1.19 deprecates `kyverno.io/v1` policies (removal planned for v1.20). Everything still works today; the next upgrade will break admission. |
+| `cloudnative-pg` | ❌ `cnpg_todo_items_open` is gone, while the cluster still reports healthy | v1.28.3/v1.29.1: the exporter now connects as `cnpg_metrics_exporter` instead of `postgres`. Our hardening (`REVOKE CONNECT … FROM PUBLIC`) shuts it out with "permission denied for database". |
+| `velero` | ❌ still v1.16 | Blocked behind cert-manager. |
+| `external-secrets`, `todo-e2e` | ✅ | These upgrades are safe for this app. That is useful information too. |
 
-6. **Show the evidence.** Run `testkube get twe <execution-id>` and open the artifacts (metrics dumps, cert details, probe logs).
-7. **Fix forward (optional).**
-   - Drop the two prometheus values.
-   - Set `uploaderType: kopia`.
-   - `GRANT SELECT ON todos TO cnpg_metrics_exporter` (or move to `predicate_query`/a view).
-   - Migrate the policies to `ValidatingPolicy`.
+6. **Act 2: fix forward, find the next one.** Delete the two `prometheus.servicemonitor` lines in [infrastructure/operators/operators.yaml](infrastructure/operators/operators.yaml), commit, and push.
+   cert-manager v1.21 and Linkerd edge-26.10.1 now roll out, and `cert-manager` and `linkerd` go green.
+   Velero is next, and its chart refuses the upgrade with `ERROR: restic uploaderType was removed` (v1.17 removed Restic). `velero` and `flux` stay red.
+7. **Show the evidence.** Each workflow saves artifacts: metrics dumps, cert details, probe logs, admitted objects.
+   Use `HOME=.kind testkube get twe` to list the executions, and `HOME=.kind testkube download artifacts <id>` to fetch them.
+   Full logs are in `.kind/logs/`.
+8. **Remaining fixes (optional homework).**
+   - Set `uploaderType: kopia` in [infrastructure/platform/velero.yaml](infrastructure/platform/velero.yaml).
+   - Run `GRANT CONNECT ON DATABASE todo TO cnpg_metrics_exporter` (and add it to `postInitApplicationSQL`).
+   - Migrate the Kyverno policies to `ValidatingPolicy`/`MutatingPolicy`/`GeneratingPolicy`.
 
-   Re-run the suite, and it goes green.
+**Resetting the demo** after a run: revert the upgrade and fix commits on `main`, then run `make kind-down kind-up app-image bootstrap`. Operators are not downgraded in place.
 
 ## Going to GKE later
 
