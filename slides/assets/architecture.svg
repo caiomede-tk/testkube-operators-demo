@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 570" width="1200" height="570" font-family="Roboto, system-ui, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7984f4"/>
+    </marker>
+    <marker id="arrow-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#94a3b8"/>
+    </marker>
+    <marker id="arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#a3e635"/>
+    </marker>
+    <style>
+      .panel { fill: #0f172a; stroke: #1e293b; stroke-width: 1.5; }
+      .box { fill: #111827; stroke: #334155; stroke-width: 1.5; }
+      .op { fill: #1e1b4b; stroke: #7984f4; stroke-width: 1.5; }
+      .tk { fill: #0f172a; stroke: #a3e635; stroke-width: 2; }
+      .t { fill: #ffffff; font-size: 16px; font-weight: 500; }
+      .s { fill: #94a3b8; font-size: 13px; }
+      .a { fill: #c8cdff; font-size: 13px; }
+      .g { fill: #a3e635; font-size: 13px; }
+      .lbl { fill: #e2e8f0; font-size: 14px; font-weight: 500; }
+      .edge { stroke: #7984f4; stroke-width: 1.8; fill: none; }
+      .edge-m { stroke: #94a3b8; stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; }
+      .edge-g { stroke: #a3e635; stroke-width: 1.8; fill: none; stroke-dasharray: 6 4; }
+    </style>
+  </defs>
+
+  <!-- Git -->
+  <rect class="box" x="8" y="190" width="140" height="150" rx="4"/>
+  <text class="t" x="78" y="218" text-anchor="middle">GitHub repo</text>
+  <text class="a" x="22" y="246">operator-versions</text>
+  <text class="a" x="22" y="266">infrastructure/</text>
+  <text class="a" x="22" y="286">apps/todo</text>
+  <text class="a" x="22" y="306">testkube/workflows</text>
+  <text class="s" x="22" y="328">upgrade = 1 PR</text>
+  <path class="edge" d="M148,250 C165,250 165,75 183,75" marker-end="url(#arrow)"/>
+
+  <!-- Cluster frame -->
+  <rect x="165" y="8" width="1027" height="554" rx="6" fill="none" stroke="#334155" stroke-width="1.5" stroke-dasharray="8 6"/>
+  <text class="s" x="1180" y="28" text-anchor="end">Kubernetes cluster · kind today → GKE</text>
+
+  <!-- Flux -->
+  <rect class="op" x="185" y="40" width="150" height="66" rx="4"/>
+  <text class="t" x="260" y="68" text-anchor="middle">Flux</text>
+  <text class="s" x="260" y="90" text-anchor="middle">GitOps engine</text>
+  <text class="s" x="352" y="70">installs in order:</text>
+  <text class="a" x="352" y="92">sources → operators → configs → platform → apps   ·   testkube → tests</text>
+
+  <!-- Operators row -->
+  <g>
+    <rect class="op" x="185" y="122" width="152" height="60" rx="4"/>
+    <text class="t" x="261" y="147" text-anchor="middle">cert-manager</text>
+    <text class="s" x="261" y="168" text-anchor="middle">1.18 → 1.21</text>
+    <rect class="op" x="347" y="122" width="152" height="60" rx="4"/>
+    <text class="t" x="423" y="147" text-anchor="middle">Linkerd</text>
+    <text class="s" x="423" y="168" text-anchor="middle">edge 26.7 → 26.10</text>
+    <rect class="op" x="509" y="122" width="152" height="60" rx="4"/>
+    <text class="t" x="585" y="147" text-anchor="middle">Kyverno</text>
+    <text class="s" x="585" y="168" text-anchor="middle">1.16 → 1.19</text>
+    <rect class="op" x="671" y="122" width="152" height="60" rx="4"/>
+    <text class="t" x="747" y="147" text-anchor="middle">External Secrets</text>
+    <text class="s" x="747" y="168" text-anchor="middle">2.11 → 2.14</text>
+    <rect class="op" x="833" y="122" width="152" height="60" rx="4"/>
+    <text class="t" x="909" y="147" text-anchor="middle">CloudNativePG</text>
+    <text class="s" x="909" y="168" text-anchor="middle">1.27 → 1.30</text>
+    <rect class="op" x="995" y="122" width="152" height="60" rx="4"/>
+    <text class="t" x="1071" y="147" text-anchor="middle">Velero</text>
+    <text class="s" x="1071" y="168" text-anchor="middle">1.16 → 1.18</text>
+  </g>
+  <path class="edge-m" d="M260,106 L260,120" marker-end="url(#arrow-muted)"/>
+
+  <!-- todo namespace -->
+  <rect class="panel" x="185" y="208" width="470" height="236" rx="4"/>
+  <text class="lbl" x="200" y="232">ns todo</text>
+  <text class="s" x="262" y="232">· meshed (Linkerd) · policed (Kyverno)</text>
+
+  <rect class="box" x="203" y="252" width="160" height="78" rx="4"/>
+  <text class="t" x="283" y="280" text-anchor="middle">ToDo app ×2</text>
+  <text class="s" x="283" y="300" text-anchor="middle">Go monolith · HTTPS</text>
+  <text class="s" x="283" y="318" text-anchor="middle">cert by cert-manager</text>
+
+  <rect class="box" x="460" y="246" width="178" height="116" rx="4"/>
+  <text class="t" x="549" y="272" text-anchor="middle">PostgreSQL ×3</text>
+  <text class="s" x="549" y="292" text-anchor="middle">CloudNativePG Cluster</text>
+  <circle cx="503" cy="322" r="15" fill="#7984f4"/>
+  <text x="503" y="327" text-anchor="middle" font-size="12" fill="#111827" font-weight="700">P</text>
+  <circle cx="549" cy="322" r="15" fill="#1e1b4b" stroke="#7984f4"/>
+  <text x="549" y="327" text-anchor="middle" font-size="12" fill="#c8cdff">R</text>
+  <circle cx="595" cy="322" r="15" fill="#1e1b4b" stroke="#7984f4"/>
+  <text x="595" y="327" text-anchor="middle" font-size="12" fill="#c8cdff">R</text>
+  <text class="s" x="549" y="352" text-anchor="middle">synchronous replication</text>
+
+  <path class="edge" d="M363,290 L458,290" marker-end="url(#arrow)"/>
+  <text class="a" x="410" y="280" text-anchor="middle">mTLS</text>
+  <text class="s" x="410" y="310" text-anchor="middle">only SA todo</text>
+
+  <rect class="box" x="203" y="348" width="160" height="80" rx="4"/>
+  <text class="t" x="283" y="374" text-anchor="middle">DB credentials</text>
+  <text class="s" x="283" y="394" text-anchor="middle">ExternalSecret</text>
+  <text class="s" x="283" y="412" text-anchor="middle">rotates without restart</text>
+  <path class="edge-m" d="M363,388 C420,388 420,345 458,345" marker-end="url(#arrow-muted)"/>
+
+  <rect class="box" x="460" y="378" width="178" height="50" rx="4"/>
+  <text class="t" x="549" y="400" text-anchor="middle">Kyverno guardrails</text>
+  <text class="s" x="549" y="418" text-anchor="middle">pinned tags · non-root · limits</text>
+
+  <!-- todo-restore -->
+  <rect x="185" y="460" width="470" height="84" rx="4" fill="none" stroke="#a3e635" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text class="lbl" x="200" y="486">ns todo-restore</text>
+  <text class="s" x="200" y="508">Velero DR drill: namespace restored, database re-bootstrapped</text>
+  <text class="s" x="200" y="528">from CNPG backups, still meshed and policed</text>
+
+  <!-- storage -->
+  <rect class="panel" x="680" y="208" width="200" height="140" rx="4"/>
+  <text class="lbl" x="695" y="232">ns storage</text>
+  <text class="t" x="780" y="266" text-anchor="middle">S3 (SeaweedFS)</text>
+  <text class="s" x="780" y="290" text-anchor="middle">CNPG base backups + WAL</text>
+  <text class="s" x="780" y="310" text-anchor="middle">Velero backups</text>
+  <text class="s" x="780" y="332" text-anchor="middle">GCS on GKE</text>
+  <path class="edge-m" d="M638,262 L678,262" marker-end="url(#arrow-muted)"/>
+  <path class="edge-m" d="M1071,182 C1071,240 930,250 882,250" marker-end="url(#arrow-muted)"/>
+
+  <!-- vault -->
+  <rect class="panel" x="680" y="366" width="200" height="78" rx="4"/>
+  <text class="lbl" x="695" y="390">ns secrets-vault</text>
+  <text class="s" x="695" y="412">stand-in for GCP Secret Manager</text>
+  <text class="s" x="695" y="432">source of DB + S3 credentials</text>
+  <path class="edge-m" d="M747,182 L747,206" marker-end="url(#arrow-muted)"/>
+  <path class="edge-m" d="M678,425 C620,442 400,444 300,431" marker-end="url(#arrow-muted)"/>
+
+  <!-- Testkube -->
+  <rect class="tk" x="905" y="208" width="270" height="336" rx="4"/>
+  <text class="t" x="1040" y="236" text-anchor="middle">Testkube agent (OSS)</text>
+  <text class="s" x="1040" y="256" text-anchor="middle">one TestWorkflow per operator</text>
+  <g class="g">
+    <text x="925" y="290">▸ flux — drift, suspend, versions</text>
+    <text x="925" y="318">▸ cert-manager — renew, key rotation</text>
+    <text x="925" y="346">▸ linkerd — mTLS, deny intruders</text>
+    <text x="925" y="374">▸ kyverno — block, mutate, generate</text>
+    <text x="925" y="402">▸ external-secrets — rotate end to end</text>
+    <text x="925" y="430">▸ cloudnative-pg — kill primary, restore</text>
+    <text x="925" y="458">▸ velero — full DR drill</text>
+    <text x="925" y="486">▸ todo-e2e — Playwright on HTTPS</text>
+  </g>
+  <text class="s" x="1040" y="526" text-anchor="middle">probe · disrupt · assert</text>
+  <path class="edge-g" d="M903,520 C800,540 700,500 657,490" marker-end="url(#arrow-green)"/>
+  <path class="edge-g" d="M903,300 C880,300 860,190 860,184" marker-end="url(#arrow-green)"/>
+</svg>

@@ -105,6 +105,17 @@ These are good stories for the talk, because each one happened while every opera
 
 **Resetting the demo** after a run: revert the upgrade and fix commits on `main`, then run `make kind-down kind-up app-image bootstrap`. Operators are not downgraded in place.
 
+## Slides
+
+[slides/slides.md](slides/slides.md) is a [Marp](https://marp.app) deck with the Testkube theme ([slides/testkube.css](slides/testkube.css)). Every slide has speaker notes.
+
+```sh
+make slides-live   # live preview while editing
+make slides        # slides/dist/index.html (press p for presenter view) + slides/dist/slides.pdf
+```
+
+The architecture diagram is [slides/assets/architecture.svg](slides/assets/architecture.svg).
+
 ## Going to GKE later
 
 Add a `clusters/gke/` entrypoint that reuses `infrastructure/` and `apps/` with these changes:

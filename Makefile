@@ -8,7 +8,7 @@ export KUBECONFIG := $(CURDIR)/.kind/kubeconfig
 # Demo-local Testkube CLI config (.kind/.testkube), so your own CLI contexts stay untouched.
 TK := HOME=$(CURDIR)/.kind testkube
 
-.PHONY: help kind-up app-image bootstrap status test run app upgrade kind-down
+.PHONY: help kind-up app-image bootstrap status test run app upgrade kind-down slides slides-live
 
 help: ## List targets
 	@grep -hE '^[a-z0-9-]+:.*## ' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -57,3 +57,13 @@ upgrade: ## Open the "upgrade operators" PR; Flux rolls it out once merged
 
 kind-down: ## Delete the kind cluster
 	kind delete cluster --name $(CLUSTER)
+
+MARP := npx -y @marp-team/marp-cli@4.5.1 slides/slides.md --theme-set slides/testkube.css --html --allow-local-files --no-stdin
+
+slides: ## Build the deck: slides/dist/index.html (presenter mode: press p) and slides/dist/slides.pdf
+	@mkdir -p slides/dist && cp -R slides/assets slides/dist/
+	$(MARP) -o slides/dist/index.html
+	$(MARP) --pdf --pdf-notes -o slides/dist/slides.pdf
+
+slides-live: ## Live preview of the deck while editing
+	$(MARP) --server --watch slides
