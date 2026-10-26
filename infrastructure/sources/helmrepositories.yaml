@@ -31,4 +31,4 @@ spec: {interval: 1h, url: https://cloudnative-pg.github.io/charts}
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata: {name: kubeshop, namespace: flux-system}
-spec: {interval: 1h, url: https://kubeshop.github.io/helm-charts}
+spec: {interval: 1h, type: oci, url: oci://us-east1-docker.pkg.dev/testkube-cloud-372110/testkube}
