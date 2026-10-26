@@ -1,0 +1,75 @@
+# Flux, beyond "controllers are up":
+#  1. every operator HelmRelease is Ready at exactly the version declared in Git
+#  2. every Kustomization in the install chain is Ready
+#  3. drift is corrected: a manual change to the app is reverted on reconcile
+#  4. suspend is honoured (no revert while suspended) and resume restores Git state
+apiVersion: testworkflows.testkube.io/v1
+kind: TestWorkflow
+metadata:
+  name: flux
+  namespace: testkube
+  labels: {demo.testkube.io/operator: flux}
+spec:
+  use: [{name: operator-test}]
+  steps:
+    - name: All operators run the versions declared in Git
+      shell: |
+        . /data/lib.sh
+        mkdir -p /data/artifacts
+        kubectl get helmreleases -A -o wide | tee /data/artifacts/helmreleases.txt
+        rc=0
+        while read -r ns name key; do
+          ( hr_at_git_version "$ns" "$name" "$key" ) || rc=1
+        done <<EOF
+        cert-manager cert-manager CERT_MANAGER_VERSION
+        linkerd linkerd-crds LINKERD_VERSION
+        linkerd linkerd-control-plane LINKERD_VERSION
+        kyverno kyverno KYVERNO_VERSION
+        external-secrets external-secrets EXTERNAL_SECRETS_VERSION
+        velero velero VELERO_VERSION
+        cnpg-system cloudnative-pg CNPG_VERSION
+        EOF
+        exit $rc
+
+    - name: Install chain is fully reconciled
+      shell: |
+        . /data/lib.sh
+        kubectl -n flux-system get kustomizations | tee /data/artifacts/kustomizations.txt
+        bad=$(kubectl -n flux-system get kustomizations -o json | jq -r '.items[] | select(any(.status.conditions[]?; .type=="Ready" and .status!="True")) | "\(.metadata.name): \(.status.conditions[]|select(.type=="Ready")|.message)"')
+        [ -z "$bad" ] || fail "Kustomizations not Ready:
+        $bad"
+        ok "all Kustomizations Ready"
+
+    - name: Drift on the app is reverted
+      shell: |
+        . /data/lib.sh
+        reconcile() { kubectl -n flux-system annotate --overwrite kustomization/apps reconcile.fluxcd.io/requestedAt="$(date +%s%N)" >/dev/null; }
+        replicas() { kubectl -n todo get deploy todo -o jsonpath='{.spec.replicas}'; }
+        want=$(replicas)
+        kubectl -n todo scale deploy todo --replicas=4
+        reconcile
+        back_to_git() { [ "$(replicas)" = "$want" ]; }
+        wait_until 120 "Flux reverted manual scale (4 -> $want replicas)" back_to_git
+
+    - name: Suspend is honoured and resume restores Git state
+      shell: |
+        . /data/lib.sh
+        reconcile() { kubectl -n flux-system annotate --overwrite kustomization/apps reconcile.fluxcd.io/requestedAt="$(date +%s%N)" >/dev/null; }
+        replicas() { kubectl -n todo get deploy todo -o jsonpath='{.spec.replicas}'; }
+        want=$(replicas)
+        kubectl -n flux-system patch kustomization apps --type=merge -p '{"spec":{"suspend":true}}'
+        kubectl -n todo scale deploy todo --replicas=3
+        reconcile; sleep 30
+        [ "$(replicas)" = 3 ] || fail "Flux changed a suspended Kustomization's workload"
+        ok "suspended Kustomization left the manual change alone for 30s"
+        kubectl -n flux-system patch kustomization apps --type=merge -p '{"spec":{"suspend":false}}'
+        reconcile
+        back_to_git() { [ "$(replicas)" = "$want" ]; }
+        wait_until 120 "resume restored $want replicas" back_to_git
+
+    - name: Leave Flux resumed
+      condition: always
+      shell: |
+        kubectl -n flux-system patch kustomization apps --type=merge -p '{"spec":{"suspend":false}}'
+      artifacts:
+        paths: ["/data/artifacts/**"]

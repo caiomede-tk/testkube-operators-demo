@@ -1,0 +1,97 @@
+# Install order: sources -> operators -> configs -> platform -> apps -> testkube -> tests
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: sources
+  namespace: flux-system
+spec:
+  interval: 1h
+  path: ./infrastructure/sources
+  prune: true
+  sourceRef: {kind: GitRepository, name: flux-system}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: operators
+  namespace: flux-system
+spec:
+  dependsOn: [{name: sources}]
+  interval: 10m
+  timeout: 15m
+  path: ./infrastructure/operators
+  prune: true
+  wait: true
+  sourceRef: {kind: GitRepository, name: flux-system}
+  postBuild:
+    substituteFrom: [{kind: ConfigMap, name: operator-versions}]
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: configs
+  namespace: flux-system
+spec:
+  dependsOn: [{name: operators}]
+  interval: 10m
+  timeout: 10m
+  path: ./infrastructure/configs
+  prune: true
+  wait: true
+  sourceRef: {kind: GitRepository, name: flux-system}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: platform
+  namespace: flux-system
+spec:
+  dependsOn: [{name: configs}]
+  interval: 10m
+  timeout: 15m
+  path: ./infrastructure/platform
+  prune: true
+  wait: true
+  sourceRef: {kind: GitRepository, name: flux-system}
+  postBuild:
+    substituteFrom: [{kind: ConfigMap, name: operator-versions}]
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  dependsOn: [{name: platform}]
+  interval: 5m
+  timeout: 10m
+  path: ./apps/todo
+  prune: true
+  wait: true
+  sourceRef: {kind: GitRepository, name: flux-system}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: testkube
+  namespace: flux-system
+spec:
+  dependsOn: [{name: sources}]
+  interval: 10m
+  timeout: 15m
+  path: ./testkube/agent
+  prune: true
+  wait: true
+  sourceRef: {kind: GitRepository, name: flux-system}
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: tests
+  namespace: flux-system
+spec:
+  dependsOn: [{name: testkube}]
+  interval: 5m
+  path: ./testkube/workflows
+  prune: true
+  sourceRef: {kind: GitRepository, name: flux-system}

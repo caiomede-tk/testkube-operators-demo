@@ -1,0 +1,9 @@
+# Kubernetes 1.33: inside the support window of both the pinned and the upgraded operator versions.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: operators-demo
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.33.12
+  - role: worker
+    image: kindest/node:v1.33.12

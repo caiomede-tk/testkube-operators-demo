@@ -1,0 +1,66 @@
+# End-to-end check of the user journey through the HTTPS UI.
+apiVersion: testworkflows.testkube.io/v1
+kind: TestWorkflow
+metadata:
+  name: todo-e2e
+  namespace: testkube
+  labels: {demo.testkube.io/operator: app}
+spec:
+  content:
+    files:
+      - path: /data/e2e/playwright.config.js
+        content: |
+          module.exports = {
+            use: { baseURL: process.env.BASE_URL, ignoreHTTPSErrors: true, trace: 'retain-on-failure' },
+            outputDir: '/data/artifacts/results',
+            reporter: [['list'], ['html', { outputFolder: '/data/artifacts/report', open: 'never' }]],
+          };
+      - path: /data/e2e/todo.spec.js
+        content: |
+          const { test, expect } = require('@playwright/test');
+
+          test('add, complete and delete a todo', async ({ page }) => {
+            const title = `e2e ${Date.now()}`;
+            await page.goto('/');
+            await page.getByLabel('New todo').fill(title);
+            await page.getByRole('button', { name: 'Add' }).click();
+            const item = page.locator('li', { hasText: title });
+            await expect(item).toBeVisible();
+            await item.getByRole('button', { name: 'Toggle' }).click();
+            await expect(page.locator('li.done', { hasText: title })).toBeVisible();
+            await page.locator('li', { hasText: title }).getByRole('button', { name: 'Delete' }).click();
+            await expect(page.locator('li', { hasText: title })).toHaveCount(0);
+          });
+  container:
+    resources:
+      requests: {cpu: 200m, memory: 256Mi}
+      limits: {memory: 1Gi}
+  steps:
+    - name: Playwright
+      run:
+        image: mcr.microsoft.com/playwright:v1.56.1-noble
+        workingDir: /data/e2e
+        env: [{name: BASE_URL, value: https://todo.todo.svc}]
+        shell: npm i --no-save --silent @playwright/test@1.56.1 && npx playwright test
+      artifacts:
+        paths: ["/data/artifacts/**"]
+---
+# Runs every operator test, one at a time (they deliberately disturb the shared environment).
+apiVersion: testworkflows.testkube.io/v1
+kind: TestWorkflow
+metadata:
+  name: operators-suite
+  namespace: testkube
+spec:
+  steps:
+    - execute:
+        parallelism: 1
+        workflows:
+          - name: flux
+          - name: cert-manager
+          - name: linkerd
+          - name: kyverno
+          - name: external-secrets
+          - name: cloudnative-pg
+          - name: velero
+          - name: todo-e2e

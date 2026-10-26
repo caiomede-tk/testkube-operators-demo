@@ -1,0 +1,79 @@
+# cert-manager, beyond "pods are Running":
+#  1. the running version is the one declared in Git
+#  2. the app certificate chains to our CA, has the right SANs and is what the app actually serves
+#  3. a forced renewal issues a new certificate AND a new private key, and the app serves it without a restart
+#  4. renewing Linkerd's identity issuer keeps the mesh working (new proxies get certs from the new issuer)
+apiVersion: testworkflows.testkube.io/v1
+kind: TestWorkflow
+metadata:
+  name: cert-manager
+  namespace: testkube
+  labels: {demo.testkube.io/operator: cert-manager}
+spec:
+  use: [{name: operator-test}]
+  steps:
+    - name: Running version matches Git
+      shell: |
+        . /data/lib.sh
+        hr_at_git_version cert-manager cert-manager CERT_MANAGER_VERSION
+
+    - name: App certificate is valid and served by the app
+      shell: |
+        . /data/lib.sh
+        apk add --no-cache -q openssl >/dev/null
+        mkdir -p /data/artifacts
+        kubectl -n todo wait certificate/todo-tls --for=condition=Ready --timeout=120s
+        kubectl -n todo get secret todo-tls -o jsonpath='{.data.tls\.crt}' | base64 -d > /data/tls.crt
+        kubectl -n todo get secret todo-tls -o jsonpath='{.data.ca\.crt}' | base64 -d > /data/ca.crt
+        openssl x509 -in /data/tls.crt -noout -subject -issuer -dates -serial -ext subjectAltName | tee /data/artifacts/app-cert-before.txt
+        openssl verify -CAfile /data/ca.crt /data/tls.crt || fail "app certificate does not chain to the demo CA"
+        grep -q 'DNS:todo.todo.svc' /data/artifacts/app-cert-before.txt || fail "SAN todo.todo.svc missing"
+        served=$(openssl s_client -connect todo.todo.svc:443 -servername todo.todo.svc -CAfile /data/ca.crt -verify_return_error </dev/null 2>/dev/null | openssl x509 -noout -serial) \
+          || fail "TLS handshake with the app failed verification"
+        [ "$served" = "$(openssl x509 -in /data/tls.crt -noout -serial)" ] || fail "app serves $served, not the certificate in its Secret"
+        ok "app serves the cert-manager certificate ($served), verified against the demo CA"
+        openssl x509 -in /data/tls.crt -noout -pubkey | sha256sum > /data/app-key-before
+        kubectl -n linkerd get secret linkerd-identity-issuer -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -serial > /data/issuer-before
+
+    - name: Force renewal of the app certificate
+      run:
+        image: quay.io/jetstack/cmctl:v2.4.0
+        args: [renew, --namespace, todo, todo-tls]
+
+    - name: Force renewal of the Linkerd identity issuer
+      run:
+        image: quay.io/jetstack/cmctl:v2.4.0
+        args: [renew, --namespace, linkerd, linkerd-identity-issuer]
+
+    - name: Renewal rotated the key and the app picked it up without restart
+      shell: |
+        . /data/lib.sh
+        apk add --no-cache -q openssl >/dev/null
+        before=$(openssl x509 -in /data/tls.crt -noout -serial)
+        new_serial() { [ "$(kubectl -n todo get secret todo-tls -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -serial)" != "$before" ]; }
+        wait_until 120 "cert-manager issued a new app certificate" new_serial
+        kubectl -n todo get secret todo-tls -o jsonpath='{.data.tls\.crt}' | base64 -d > /data/tls-new.crt
+        openssl x509 -in /data/tls-new.crt -noout -subject -dates -serial | tee /data/artifacts/app-cert-after.txt
+        policy=$(kubectl -n todo get certificate todo-tls -o jsonpath='{.spec.privateKey.rotationPolicy}')
+        if [ "$(openssl x509 -in /data/tls-new.crt -noout -pubkey | sha256sum)" = "$(cat /data/app-key-before)" ]; then
+          fail "renewal REUSED the private key (rotationPolicy='${policy:-<default>}'); a leaked key would survive renewal"
+        fi
+        ok "renewal generated a new private key (rotationPolicy='${policy:-<default>}')"
+        want=$(openssl x509 -in /data/tls-new.crt -noout -serial)
+        serving_new() { [ "$(openssl s_client -connect todo.todo.svc:443 -servername todo.todo.svc </dev/null 2>/dev/null | openssl x509 -noout -serial)" = "$want" ]; }
+        wait_until 180 "app serves the renewed certificate (no restart)" serving_new
+
+    - name: Mesh keeps working after the identity issuer rotation
+      shell: |
+        . /data/lib.sh
+        apk add --no-cache -q openssl >/dev/null
+        issuer_rotated() { [ "$(kubectl -n linkerd get secret linkerd-identity-issuer -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -serial)" != "$(cat /data/issuer-before)" ]; }
+        wait_until 120 "cert-manager issued a new Linkerd identity issuer" issuer_rotated
+        # New proxies get workload certs from the new issuer; the database still runs proxies issued by the old one.
+        kubectl -n todo rollout restart deploy/todo
+        kubectl -n todo rollout status deploy/todo --timeout=180s
+        code=$(api -o /dev/null -w '%{http_code}' -X POST $APP/api/todos -H 'Content-Type: application/json' -d '{"title":"cert-manager rotation probe"}')
+        [ "$code" = 201 ] || fail "app could not write to PostgreSQL over mTLS after issuer rotation (HTTP $code)"
+        ok "app -> PostgreSQL over mTLS still works with workload certs from the renewed issuer"
+      artifacts:
+        paths: ["/data/artifacts/**"]

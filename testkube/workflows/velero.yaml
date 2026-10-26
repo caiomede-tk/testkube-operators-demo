@@ -1,0 +1,126 @@
+# Velero, beyond "BackupStorageLocation is Available":
+# a full disaster-recovery drill of the todo namespace into todo-restore.
+#  1. the running version is the one declared in Git; storage location Available; node agents running
+#  2. a backup of the namespace (incl. file-system backup of volumes) completes cleanly
+#  3. a restore with namespace mapping + resource modifiers (the database is re-bootstrapped from
+#     CNPG's object-store backup) brings the app back with the data, still meshed and still policed
+apiVersion: testworkflows.testkube.io/v1
+kind: TestWorkflow
+metadata:
+  name: velero
+  namespace: testkube
+  labels: {demo.testkube.io/operator: velero}
+spec:
+  use: [{name: operator-test}]
+  steps:
+    - name: Running version matches Git and Velero is operational
+      shell: |
+        . /data/lib.sh
+        hr_at_git_version velero velero VELERO_VERSION
+        available() { [ "$(kubectl -n velero get backupstoragelocation default -o jsonpath='{.status.phase}')" = Available ]; }
+        wait_until 120 "backup storage location Available" available
+        kubectl -n velero rollout status deploy/velero --timeout=120s || fail "velero server is not running"
+        kubectl -n velero rollout status ds/node-agent --timeout=120s || fail "velero node-agent is not running"
+
+    - name: Seed data and take a CNPG base backup
+      shell: |
+        . /data/lib.sh
+        api -X POST $APP/api/todos -H 'Content-Type: application/json' -d '{"title":"velero drill {{ execution.id }}"}' | jq -e .id >/dev/null || fail "cannot seed data"
+        api $APP/api/todos | jq length > /data/count
+        cat <<EOF | kubectl apply -f -
+        apiVersion: postgresql.cnpg.io/v1
+        kind: Backup
+        metadata: {name: velero-{{ execution.id }}, namespace: todo}
+        spec: {cluster: {name: todo-db}}
+        EOF
+        completed() { [ "$(kubectl -n todo get backups.postgresql.cnpg.io velero-{{ execution.id }} -o jsonpath='{.status.phase}')" = completed ]; }
+        wait_until 300 "CNPG base backup completed" completed
+
+    - name: Back up the todo namespace
+      shell: |
+        . /data/lib.sh
+        cat <<EOF | kubectl apply -f -
+        apiVersion: velero.io/v1
+        kind: Backup
+        metadata: {name: drill-{{ execution.id }}, namespace: velero}
+        spec:
+          includedNamespaces: [todo]
+          defaultVolumesToFsBackup: true
+          ttl: 24h0m0s
+        EOF
+        finished() { kubectl -n velero get backups.velero.io drill-{{ execution.id }} -o json | jq -e '.status.phase | test("^(Completed|PartiallyFailed|Failed|FailedValidation)$")'; }
+        wait_until 600 "Velero backup finished" finished
+        kubectl -n velero get backups.velero.io drill-{{ execution.id }} -o json | jq '.status' | tee /data/backup-status.json
+        kubectl -n velero get podvolumebackups -l velero.io/backup-name=drill-{{ execution.id }} 2>/dev/null || true
+        [ "$(jq -r .phase /data/backup-status.json)" = Completed ] \
+          || fail "Velero backup ended $(jq -r .phase /data/backup-status.json): $(jq -c '{failureReason, validationErrors, errors, warnings}' /data/backup-status.json)"
+        ok "backup Completed: $(jq -r '.progress.itemsBackedUp' /data/backup-status.json) items"
+
+    - name: Restore into todo-restore
+      shell: |
+        . /data/lib.sh
+        kubectl delete ns todo-restore --ignore-not-found --wait=true --timeout=300s
+        S3='{"destinationPath":"s3://cnpg-backups/","endpointURL":"http://seaweedfs.storage.svc:8333","s3Credentials":{"accessKeyId":{"name":"s3-credentials","key":"ACCESS_KEY_ID"},"secretAccessKey":{"name":"s3-credentials","key":"ACCESS_SECRET_KEY"}},"wal":{"compression":"gzip"},"data":{"compression":"gzip"}}'
+        DRILL=$(echo "$S3" | jq -c '.destinationPath="s3://cnpg-backups/drills/{{ execution.id }}/"')
+        ORIGIN=$(echo "$S3" | jq -c '[{name:"origin",barmanObjectStore:(.+{serverName:"todo-db"})}]')
+        # The restored database must not bootstrap empty: rewrite it to recover from CNPG's backups,
+        # archive to its own path, and run small.
+        cat <<EOF | kubectl apply -f -
+        apiVersion: v1
+        kind: ConfigMap
+        metadata: {name: drill-{{ execution.id }}, namespace: velero}
+        data:
+          rules.yaml: |
+            version: v1
+            resourceModifierRules:
+              - conditions: {groupResource: clusters.postgresql.cnpg.io, resourceNameRegex: "^todo-db$"}
+                patches:
+                  - {operation: remove, path: "/spec/bootstrap/initdb"}
+                  - {operation: add, path: "/spec/bootstrap/recovery", value: '{"source":"origin","database":"todo","owner":"todo","secret":{"name":"todo-db-credentials"}}'}
+                  - {operation: add, path: "/spec/externalClusters", value: '$ORIGIN'}
+                  - {operation: replace, path: "/spec/backup/barmanObjectStore", value: '$DRILL'}
+                  - {operation: replace, path: "/spec/instances", value: "1"}
+              - conditions: {groupResource: deployments.apps, resourceNameRegex: "^todo$"}
+                patches:
+                  - {operation: replace, path: "/spec/replicas", value: "1"}
+        EOF
+        cat <<EOF | kubectl apply -f -
+        apiVersion: velero.io/v1
+        kind: Restore
+        metadata: {name: drill-{{ execution.id }}, namespace: velero}
+        spec:
+          backupName: drill-{{ execution.id }}
+          namespaceMapping: {todo: todo-restore}
+          restorePVs: false
+          excludedResources: [pods, replicasets.apps, endpoints, endpointslices.discovery.k8s.io, persistentvolumeclaims,
+            persistentvolumes, backups.postgresql.cnpg.io, scheduledbackups.postgresql.cnpg.io,
+            certificaterequests.cert-manager.io, events, events.events.k8s.io]
+          resourceModifier: {kind: ConfigMap, name: drill-{{ execution.id }}}
+        EOF
+        finished() { kubectl -n velero get restore drill-{{ execution.id }} -o json | jq -e '.status.phase | test("^(Completed|PartiallyFailed|Failed|FailedValidation)$")'; }
+        wait_until 300 "Velero restore finished" finished
+        kubectl -n velero get restore drill-{{ execution.id }} -o json | jq '.status' | tee /data/restore-status.json
+        [ "$(jq -r .phase /data/restore-status.json)" = Completed ] || fail "restore ended $(jq -r .phase /data/restore-status.json)"
+
+    - name: Restored app is healthy, has the data, and is still meshed and policed
+      shell: |
+        . /data/lib.sh
+        db() { kubectl -n todo-restore get cluster todo-db -o json | jq -e '.status.readyInstances==1'; }
+        wait_until 600 "restored database recovered from CNPG backups" db
+        kubectl -n todo-restore rollout status deploy/todo --timeout=300s || fail "restored app never became ready"
+        restored=$(curl -sk --max-time 5 https://todo.todo-restore.svc/api/todos)
+        echo "$restored" | jq -e 'map(.title) | index("velero drill {{ execution.id }}")' >/dev/null || fail "restored app is missing the drill marker row"
+        [ "$(echo "$restored" | jq length)" -ge "$(cat /data/count)" ] || fail "restored app has fewer rows than the source"
+        ok "restored app serves $(echo "$restored" | jq length) todos including the drill marker"
+        kubectl -n todo-restore get pods -l app=todo -o json | jq -e '.items[0] | [(.spec.initContainers // [])[], .spec.containers[]] | map(.name) | index("linkerd-proxy")' >/dev/null \
+          || fail "restored app is not meshed"
+        kubectl -n todo-restore get resourcequota pod-quota >/dev/null || fail "Kyverno guardrails missing in restored namespace"
+        ok "restored namespace is meshed and policed"
+
+    - name: Clean up
+      condition: always
+      shell: |
+        kubectl delete ns todo-restore --ignore-not-found --wait=false
+        kubectl -n velero delete restore drill-{{ execution.id }} --ignore-not-found
+        kubectl -n velero delete configmap drill-{{ execution.id }} --ignore-not-found
+        kubectl -n todo delete backups.postgresql.cnpg.io velero-{{ execution.id }} --ignore-not-found

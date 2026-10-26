@@ -1,0 +1,34 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata: {name: jetstack, namespace: flux-system}
+spec: {interval: 1h, url: https://charts.jetstack.io}
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata: {name: linkerd-edge, namespace: flux-system}
+spec: {interval: 1h, url: https://helm.linkerd.io/edge}
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata: {name: kyverno, namespace: flux-system}
+spec: {interval: 1h, url: https://kyverno.github.io/kyverno}
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata: {name: external-secrets, namespace: flux-system}
+spec: {interval: 1h, url: https://charts.external-secrets.io}
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata: {name: vmware-tanzu, namespace: flux-system}
+spec: {interval: 1h, url: https://vmware-tanzu.github.io/helm-charts}
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata: {name: cnpg, namespace: flux-system}
+spec: {interval: 1h, url: https://cloudnative-pg.github.io/charts}
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata: {name: kubeshop, namespace: flux-system}
+spec: {interval: 1h, url: https://kubeshop.github.io/helm-charts}

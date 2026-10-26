@@ -1,0 +1,32 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata: {name: velero, namespace: velero}
+spec:
+  interval: 30m
+  timeout: 10m
+  chart:
+    spec:
+      chart: velero
+      version: "${VELERO_VERSION}"
+      sourceRef: {kind: HelmRepository, name: vmware-tanzu, namespace: flux-system}
+  install: {crds: CreateReplace}
+  upgrade: {crds: CreateReplace, remediation: {retries: 2}}
+  values:
+    initContainers:
+      - name: velero-plugin-for-aws
+        image: velero/velero-plugin-for-aws:${VELERO_AWS_PLUGIN_VERSION}
+        volumeMounts: [{mountPath: /target, name: plugins}]
+    deployNodeAgent: true
+    snapshotsEnabled: false
+    credentials:
+      useSecret: true
+      existingSecret: velero-s3
+    configuration:
+      # File-system backups use restic, matching the repositories created by our first Velero install.
+      uploaderType: restic
+      backupStorageLocation:
+        - name: default
+          provider: aws
+          bucket: velero
+          default: true
+          config: {region: us-east-1, s3ForcePathStyle: "true", s3Url: "http://seaweedfs.storage.svc:8333"}

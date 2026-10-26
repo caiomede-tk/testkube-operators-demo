@@ -1,0 +1,100 @@
+# Shared runtime for the operator TestWorkflows: a kubectl/jq/curl image, a ServiceAccount
+# allowed to poke at the operators, and a small shell library (/data/lib.sh).
+apiVersion: testworkflows.testkube.io/v1
+kind: TestWorkflowTemplate
+metadata: {name: operator-test, namespace: testkube}
+spec:
+  pod:
+    serviceAccountName: operator-tests
+  container:
+    image: alpine/k8s:1.33.12
+    resources:
+      requests: {cpu: 50m, memory: 64Mi}
+      limits: {memory: 256Mi}
+  content:
+    files:
+      - path: /data/lib.sh
+        content: |
+          set -eu
+          APP=https://todo.todo.svc
+          fail() { echo "❌ FINDING: $*" >&2; exit 1; }
+          ok() { echo "✅ $*"; }
+          api() { curl -sk --max-time 5 "$@"; }
+          # wait_until <seconds> <description> <command...>
+          wait_until() {
+            t=$1; d=$2; shift 2; end=$(( $(date +%s) + t ))
+            until "$@" >/dev/null 2>&1; do
+              [ "$(date +%s)" -lt "$end" ] || fail "timed out after ${t}s waiting for: $d"
+              sleep 3
+            done
+            ok "$d"
+          }
+          # hr_at_git_version <namespace> <helmrelease> <key in flux-system/operator-versions>
+          # Passes only when Flux reports the HelmRelease Ready at exactly the version declared in Git.
+          hr_at_git_version() {
+            want=$(kubectl -n flux-system get cm operator-versions -o jsonpath="{.data.$3}")
+            end=$(( $(date +%s) + 600 ))
+            while :; do
+              hr=$(kubectl -n "$1" get helmrelease "$2" -o json)
+              got=$(echo "$hr" | jq -r '.status.history[0].chartVersion // "none"')
+              tried=$(echo "$hr" | jq -r '.status.lastAttemptedRevision // ""')
+              ready=$(echo "$hr" | jq -r '.status.conditions[]? | select(.type=="Ready") | .status')
+              if [ "$got" = "$want" ] && [ "$ready" = True ]; then ok "$1/$2 runs $got, as declared in Git"; return 0; fi
+              # Flux already tried the desired version and gave up: no point waiting.
+              if [ "$tried" = "$want" ] && [ "$ready" = False ]; then break; fi
+              [ "$(date +%s)" -lt "$end" ] || break
+              echo "… $1/$2: deployed=$got desired=$want ready=$ready, waiting for Flux"; sleep 10
+            done
+            echo "$hr" | jq -r '.status.conditions[]? | "  \(.type)=\(.status) \(.reason): \(.message)"' >&2
+            fail "$1/$2 is not running the version declared in Git (desired $want, deployed $got)"
+          }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: operator-tests, namespace: testkube}
+---
+# Scoped to what the tests do: read state, poke operators (renew, rotate, fail over,
+# back up, restore) and run short-lived probe pods/namespaces.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: operator-tests}
+rules:
+  - apiGroups: [""]
+    resources: [pods, pods/log, services, endpoints, configmaps, secrets, serviceaccounts, namespaces, resourcequotas, events]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [""]
+    resources: [pods/exec, pods/proxy]
+    verbs: [get, create]
+  - apiGroups: [apps]
+    resources: [deployments, deployments/scale, daemonsets, statefulsets, replicasets]
+    verbs: [get, list, watch, patch, update]
+  - apiGroups: [helm.toolkit.fluxcd.io, kustomize.toolkit.fluxcd.io, source.toolkit.fluxcd.io]
+    resources: ["*"]
+    verbs: [get, list, watch, patch]
+  - apiGroups: [cert-manager.io]
+    resources: [certificates, certificates/status, certificaterequests, issuers, clusterissuers]
+    verbs: [get, list, watch, update, patch]
+  - apiGroups: [external-secrets.io]
+    resources: ["*"]
+    verbs: [get, list, watch]
+  - apiGroups: [kyverno.io, policies.kyverno.io]
+    resources: ["*"]
+    verbs: [get, list, watch]
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [get, list]
+  - apiGroups: [postgresql.cnpg.io]
+    resources: [clusters, backups]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [velero.io]
+    resources: [backups, restores, backupstoragelocations, podvolumebackups, podvolumerestores, deletebackuprequests]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [policy.linkerd.io]
+    resources: ["*"]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: operator-tests}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: operator-tests}
+subjects: [{kind: ServiceAccount, name: operator-tests, namespace: testkube}]

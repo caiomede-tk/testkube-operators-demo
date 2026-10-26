@@ -1,0 +1,89 @@
+# Kyverno, beyond "webhook is registered":
+#  1. the running version is the one declared in Git, and every policy is Ready
+#  2. each Enforce policy actually blocks a violating Pod/Namespace (and names itself in the message)
+#  3. a compliant Pod is admitted and mutated (seccomp RuntimeDefault)
+#  4. a new application namespace gets its generated ResourceQuota
+#  5. our policies are not written against a deprecated API (upgrade-readiness)
+apiVersion: testworkflows.testkube.io/v1
+kind: TestWorkflow
+metadata:
+  name: kyverno
+  namespace: testkube
+  labels: {demo.testkube.io/operator: kyverno}
+spec:
+  use: [{name: operator-test}]
+  steps:
+    - name: Running version matches Git and policies are Ready
+      shell: |
+        . /data/lib.sh
+        hr_at_git_version kyverno kyverno KYVERNO_VERSION
+        kubectl get clusterpolicies
+        notready=$(kubectl get clusterpolicies -o json | jq -r '.items[] | select(any(.status.conditions[]?; .type=="Ready" and .status=="True") | not) | .metadata.name')
+        [ -z "$notready" ] || fail "policies not Ready: $notready"
+        ok "all ClusterPolicies Ready"
+
+    - name: Namespace guardrails
+      shell: |
+        . /data/lib.sh
+        kubectl delete ns kyverno-probe --ignore-not-found --wait=true
+        unmeshed='{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"kyverno-probe-unmeshed","labels":{"demo.testkube.io/policy":"enforced"}}}'
+        if out=$(echo "$unmeshed" | kubectl apply --dry-run=server -f - 2>&1); then fail "unmeshed app namespace was admitted"; fi
+        echo "$out" | grep -q require-mesh || fail "unmeshed namespace rejected, but not by require-mesh: $out"
+        ok "require-mesh blocks unmeshed app namespaces"
+        cat <<'EOF' | kubectl apply -f -
+        apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: kyverno-probe
+          labels: {demo.testkube.io/policy: enforced}
+          annotations: {linkerd.io/inject: enabled}
+        EOF
+        quota() { kubectl -n kyverno-probe get resourcequota pod-quota; }
+        wait_until 60 "Kyverno generated ResourceQuota pod-quota in the new namespace" quota
+
+    - name: Pod guardrails block violations and mutate compliant pods
+      shell: |
+        . /data/lib.sh
+        mkdir -p /data/artifacts
+        # pod <name> <image> <securityContext json> <resources json>
+        pod() { cat <<EOF
+        {"apiVersion":"v1","kind":"Pod","metadata":{"name":"$1","namespace":"kyverno-probe"},
+         "spec":{"securityContext":$3,"containers":[{"name":"c","image":"$2","resources":$4}]}}
+        EOF
+        }
+        NONROOT='{"runAsNonRoot":true,"runAsUser":1000}'
+        LIMITS='{"limits":{"memory":"64Mi"}}'
+        # expect_denied <policy> <manifest>
+        expect_denied() {
+          if out=$(echo "$2" | kubectl apply --dry-run=server -f - 2>&1); then fail "admitted a pod that violates $1"; fi
+          echo "$out" | grep -q "$1" || fail "pod rejected, but not by $1: $out"
+          ok "$1 blocks the violation"
+        }
+        expect_denied disallow-latest-tag     "$(pod latest nginx:latest "$NONROOT" "$LIMITS")"
+        expect_denied require-run-as-non-root "$(pod root nginx:1.29.1 '{}' "$LIMITS")"
+        expect_denied require-memory-limits   "$(pod nolimits nginx:1.29.1 "$NONROOT" '{}')"
+        pod good nginx:1.29.1 "$NONROOT" "$LIMITS" | kubectl apply --dry-run=server -o json -f - > /data/artifacts/admitted-pod.json \
+          || fail "compliant pod was rejected"
+        [ "$(jq -r '.spec.securityContext.seccompProfile.type' /data/artifacts/admitted-pod.json)" = RuntimeDefault ] \
+          || fail "compliant pod admitted but default-seccomp did not mutate it"
+        ok "compliant pod admitted and mutated with seccomp RuntimeDefault"
+
+    - name: Policies use no deprecated API
+      shell: |
+        . /data/lib.sh
+        kinds=$(kubectl get clusterpolicies -o json | jq -r '[.items[].apiVersion] | unique | join(",")')
+        dep=$(kubectl get crd clusterpolicies.kyverno.io -o json | jq -r --arg v "${kinds#*/}" '.spec.versions[] | select(.name==$v) | select(.deprecated==true) | (.deprecationWarning // "deprecated")')
+        # Re-apply the live policies (server-side dry run) and collect any warnings the API returns.
+        warn=$(kubectl get clusterpolicies -o json \
+          | jq 'del(.items[].status, .items[].metadata.managedFields, .items[].metadata.resourceVersion, .items[].metadata.uid, .items[].metadata.generation, .items[].metadata.creationTimestamp)' \
+          | kubectl apply --dry-run=server -f - 2>&1 >/dev/null | grep -i warning || true)
+        [ -z "$dep$warn" ] || fail "our policies ($kinds) are written against a deprecated API:
+        ${dep}
+        ${warn}"
+        ok "policies ($kinds) use a supported, non-deprecated API"
+
+    - name: Clean up
+      condition: always
+      shell: kubectl delete ns kyverno-probe --ignore-not-found --wait=false
+      artifacts:
+        paths: ["/data/artifacts/**"]

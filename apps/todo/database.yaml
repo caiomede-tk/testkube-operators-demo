@@ -1,0 +1,88 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata: {name: todo-db, namespace: todo}
+spec:
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.9-system-bookworm
+  storage: {size: 1Gi}
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 384Mi}
+  postgresql:
+    parameters: {shared_buffers: 64MB}
+    synchronous: {method: any, number: 1}   # a commit is acknowledged only once a replica has it
+  bootstrap:
+    initdb:
+      database: todo
+      owner: todo
+      secret: {name: todo-db-credentials}
+  managed:
+    roles:
+      - name: todo
+        ensure: present
+        login: true
+        passwordSecret: {name: todo-db-credentials}
+  monitoring:
+    customQueriesConfigMap:
+      - {name: todo-db-metrics, key: queries.yaml}
+  backup:
+    retentionPolicy: 7d
+    barmanObjectStore:
+      destinationPath: s3://cnpg-backups/
+      endpointURL: http://seaweedfs.storage.svc:8333
+      s3Credentials:
+        accessKeyId: {name: s3-credentials, key: ACCESS_KEY_ID}
+        secretAccessKey: {name: s3-credentials, key: ACCESS_SECRET_KEY}
+      wal: {compression: gzip}
+      data: {compression: gzip}
+---
+# Business metrics exported by CNPG's built-in Prometheus exporter (port 9187).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: todo-db-metrics
+  namespace: todo
+  labels: {cnpg.io/reload: "true"}
+data:
+  queries.yaml: |
+    todo_items:
+      query: "SELECT count(*) FILTER (WHERE NOT done) AS open, count(*) FILTER (WHERE done) AS done FROM todos"
+      target_databases: ["todo"]
+      metrics:
+        - open: {usage: GAUGE, description: "Open todo items"}
+        - done: {usage: GAUGE, description: "Completed todo items"}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata: {name: todo-db-daily, namespace: todo}
+spec:
+  schedule: "0 0 2 * * *"
+  immediate: true
+  backupOwnerReference: self
+  cluster: {name: todo-db}
+---
+# Only the app and the database's own instances (replication) may open connections to PostgreSQL.
+# ServiceAccount refs are namespace-relative, so the policy keeps working in a Velero-restored copy.
+apiVersion: policy.linkerd.io/v1beta3
+kind: Server
+metadata: {name: postgres, namespace: todo}
+spec:
+  podSelector: {matchLabels: {cnpg.io/cluster: todo-db}}
+  port: 5432
+  proxyProtocol: opaque
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: MeshTLSAuthentication
+metadata: {name: postgres-clients, namespace: todo}
+spec:
+  identityRefs:
+    - {kind: ServiceAccount, name: todo}
+    - {kind: ServiceAccount, name: todo-db}
+---
+apiVersion: policy.linkerd.io/v1alpha1
+kind: AuthorizationPolicy
+metadata: {name: postgres-clients, namespace: todo}
+spec:
+  targetRef: {group: policy.linkerd.io, kind: Server, name: postgres}
+  requiredAuthenticationRefs:
+    - {group: policy.linkerd.io, kind: MeshTLSAuthentication, name: postgres-clients}

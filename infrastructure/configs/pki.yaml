@@ -1,0 +1,56 @@
+# cert-manager owns every certificate in the demo:
+#  - demo-ca: a ClusterIssuer that signs the ToDo app's HTTPS certificate
+#  - Linkerd's trust anchor + identity issuer (the issuer is rotated by cert-manager)
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata: {name: selfsigned}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: demo-root-ca, namespace: cert-manager}
+spec:
+  isCA: true
+  commonName: demo-root-ca
+  secretName: demo-root-ca
+  duration: 87600h
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {kind: ClusterIssuer, name: selfsigned}
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata: {name: demo-ca}
+spec:
+  ca: {secretName: demo-root-ca}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: linkerd-trust-anchor, namespace: linkerd}
+spec:
+  isCA: true
+  commonName: root.linkerd.cluster.local
+  secretName: linkerd-trust-anchor
+  duration: 87600h
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {kind: ClusterIssuer, name: selfsigned}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata: {name: linkerd-trust-anchor, namespace: linkerd}
+spec:
+  ca: {secretName: linkerd-trust-anchor}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: linkerd-identity-issuer, namespace: linkerd}
+spec:
+  isCA: true
+  commonName: identity.linkerd.cluster.local
+  dnsNames: [identity.linkerd.cluster.local]
+  secretName: linkerd-identity-issuer
+  duration: 48h
+  renewBefore: 25h
+  privateKey: {algorithm: ECDSA}
+  usages: [cert sign, crl sign, server auth, client auth]
+  issuerRef: {kind: Issuer, name: linkerd-trust-anchor}

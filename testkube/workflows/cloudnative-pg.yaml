@@ -1,0 +1,116 @@
+# CloudNativePG, beyond "Cluster is healthy":
+#  1. the running version is the one declared in Git; all instances ready, WAL archiving working
+#  2. the business metric exported by CNPG (custom query) exists and matches what the app reports
+#  3. killing the primary under write load: failover time is bounded and no acknowledged write is lost
+#  4. a fresh backup can be restored into a new cluster with the same data
+apiVersion: testworkflows.testkube.io/v1
+kind: TestWorkflow
+metadata:
+  name: cloudnative-pg
+  namespace: testkube
+  labels: {demo.testkube.io/operator: cloudnative-pg}
+spec:
+  use: [{name: operator-test}]
+  config:
+    maxFailoverSeconds: {type: integer, default: 60}
+  steps:
+    - name: Running version matches Git and the cluster is healthy
+      shell: |
+        . /data/lib.sh
+        hr_at_git_version cnpg-system cloudnative-pg CNPG_VERSION
+        healthy() { kubectl -n todo get cluster todo-db -o json | jq -e '.status.phase=="Cluster in healthy state" and .status.readyInstances==.spec.instances'; }
+        wait_until 300 "todo-db: all instances ready" healthy
+        archiving() { kubectl -n todo get cluster todo-db -o json | jq -e '.status.conditions[] | select(.type=="ContinuousArchiving") | .status=="True"'; }
+        wait_until 120 "todo-db: continuous WAL archiving to S3 works" archiving
+
+    - name: Business metric is exported and correct
+      shell: |
+        . /data/lib.sh
+        mkdir -p /data/artifacts
+        for i in 1 2 3; do api -o /dev/null -X POST $APP/api/todos -H 'Content-Type: application/json' -d "{\"title\":\"metric probe $i\"}"; done
+        open_api=$(api $APP/api/todos | jq '[.[] | select(.done | not)] | length')
+        primary=$(kubectl -n todo get cluster todo-db -o jsonpath='{.status.currentPrimary}')
+        kubectl get --raw "/api/v1/namespaces/todo/pods/$primary:9187/proxy/metrics" > /data/artifacts/primary-metrics.txt
+        open_metric=$(awk '/^cnpg_todo_items_open[ {]/ {print $NF}' /data/artifacts/primary-metrics.txt)
+        if [ -z "$open_metric" ]; then
+          grep -E '^cnpg_collector_(last_collection_error|errors)' /data/artifacts/primary-metrics.txt >&2 || true
+          kubectl -n todo logs "$primary" -c postgres --since=10m 2>/dev/null | grep -i 'todo_items\|permission denied' | tail -5 >&2 || true
+          fail "custom metric cnpg_todo_items_open is missing: dashboards/alerts on open todos are blind (the operator still reports healthy)"
+        fi
+        [ "${open_metric%.*}" = "$open_api" ] || fail "metric says $open_metric open todos, app says $open_api"
+        ok "cnpg_todo_items_open=$open_metric matches the app ($open_api)"
+
+    - name: Primary failover under write load loses no acknowledged write
+      shell: |
+        . /data/lib.sh
+        old=$(kubectl -n todo get cluster todo-db -o jsonpath='{.status.currentPrimary}')
+        : > /data/acked
+        ( for i in $(seq 1 400); do
+            id=$(api -X POST $APP/api/todos -H 'Content-Type: application/json' -d "{\"title\":\"failover {{ execution.id }} $i\"}" | jq -r '.id // empty' 2>/dev/null) || true
+            [ -n "$id" ] && echo "$(date +%s) $id" >> /data/acked
+            sleep 0.2
+          done ) &
+        writer=$!
+        sleep 10
+        t0=$(date +%s)
+        kubectl -n todo delete pod "$old" --grace-period=1 --wait=false
+        promoted() { p=$(kubectl -n todo get cluster todo-db -o jsonpath='{.status.currentPrimary}'); [ "$p" != "$old" ] && kubectl -n todo wait pod "$p" --for=condition=Ready --timeout=1s; }
+        wait_until 300 "a replica was promoted" promoted
+        failover=$(( $(date +%s) - t0 ))
+        wait $writer
+        total=$(wc -l < /data/acked)
+        after=$(awk -v t=$t0 '$1 > t + '"$failover"' {n++} END {print n+0}' /data/acked)
+        echo "acknowledged writes: $total (after failover: $after); new primary: $(kubectl -n todo get cluster todo-db -o jsonpath='{.status.currentPrimary}')"
+        [ "$after" -gt 0 ] || fail "the app never recovered its writes after failover"
+        api $APP/api/todos | jq -r '.[].id' | sort -n > /tmp/present
+        awk '{print $2}' /data/acked | sort -n > /tmp/acked
+        lost=$(comm -23 /tmp/acked /tmp/present | tr '\n' ' ')
+        [ -z "$lost" ] || fail "acknowledged writes LOST in failover: $lost"
+        ok "no acknowledged write lost"
+        [ "$failover" -le {{ config.maxFailoverSeconds }} ] || fail "failover took ${failover}s (limit {{ config.maxFailoverSeconds }}s)"
+        ok "failover took ${failover}s (limit {{ config.maxFailoverSeconds }}s)"
+        healthy() { kubectl -n todo get cluster todo-db -o json | jq -e '.status.phase=="Cluster in healthy state" and .status.readyInstances==.spec.instances'; }
+        wait_until 300 "old primary rejoined as a replica" healthy
+
+    - name: A fresh backup restores into a new cluster with the same data
+      shell: |
+        . /data/lib.sh
+        kubectl -n todo delete cluster todo-db-recovery --ignore-not-found --wait=true
+        primary=$(kubectl -n todo get cluster todo-db -o jsonpath='{.status.currentPrimary}')
+        count=$(kubectl -n todo exec "$primary" -c postgres -- psql -d todo -tAc 'select count(*) from todos')
+        cat <<EOF | kubectl apply -f -
+        apiVersion: postgresql.cnpg.io/v1
+        kind: Backup
+        metadata: {name: tk-{{ execution.id }}, namespace: todo}
+        spec: {cluster: {name: todo-db}}
+        EOF
+        done_() { kubectl -n todo get backups.postgresql.cnpg.io tk-{{ execution.id }} -o json | jq -e '.status.phase=="completed" or .status.phase=="failed"'; }
+        wait_until 300 "backup finished" done_
+        [ "$(kubectl -n todo get backups.postgresql.cnpg.io tk-{{ execution.id }} -o jsonpath='{.status.phase}')" = completed ] \
+          || fail "backup failed: $(kubectl -n todo get backups.postgresql.cnpg.io tk-{{ execution.id }} -o jsonpath='{.status.error}')"
+        cat <<EOF | kubectl apply -f -
+        apiVersion: postgresql.cnpg.io/v1
+        kind: Cluster
+        metadata: {name: todo-db-recovery, namespace: todo}
+        spec:
+          instances: 1
+          imageName: $(kubectl -n todo get cluster todo-db -o jsonpath='{.spec.imageName}')
+          storage: {size: 1Gi}
+          resources: {requests: {cpu: 50m, memory: 128Mi}, limits: {memory: 384Mi}}
+          bootstrap:
+            recovery:
+              backup: {name: tk-{{ execution.id }}}
+        EOF
+        recovered() { kubectl -n todo get cluster todo-db-recovery -o json | jq -e '.status.readyInstances==1'; }
+        wait_until 600 "recovery cluster is up" recovered
+        rcount=$(kubectl -n todo exec todo-db-recovery-1 -c postgres -- psql -d todo -tAc 'select count(*) from todos')
+        [ "$rcount" -ge "$count" ] || fail "recovered $rcount rows, expected at least $count"
+        ok "recovered $rcount rows (source had $count when the backup started)"
+
+    - name: Clean up
+      condition: always
+      shell: |
+        kubectl -n todo delete cluster todo-db-recovery --ignore-not-found --wait=false
+        kubectl -n todo delete backups.postgresql.cnpg.io tk-{{ execution.id }} --ignore-not-found
+      artifacts:
+        paths: ["/data/artifacts/**"]

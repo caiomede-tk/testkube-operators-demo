@@ -1,0 +1,83 @@
+# Linkerd, beyond "control plane is up":
+#  1. the running version is the one declared in Git
+#  2. every app and database pod carries a proxy
+#  3. app -> PostgreSQL traffic is mTLS with the app's workload identity (read from the database proxy's metrics)
+#  4. the AuthorizationPolicy really denies: wrong ServiceAccount and unmeshed clients cannot reach PostgreSQL,
+#     while the app's ServiceAccount can (positive control, same password)
+apiVersion: testworkflows.testkube.io/v1
+kind: TestWorkflow
+metadata:
+  name: linkerd
+  namespace: testkube
+  labels: {demo.testkube.io/operator: linkerd}
+spec:
+  use: [{name: operator-test}]
+  steps:
+    - name: Running version matches Git
+      shell: |
+        . /data/lib.sh
+        hr_at_git_version linkerd linkerd-crds LINKERD_VERSION
+        hr_at_git_version linkerd linkerd-control-plane LINKERD_VERSION
+
+    - name: Every app and database pod is meshed
+      shell: |
+        . /data/lib.sh
+        kubectl -n todo get pods -l 'app=todo' -o json > /tmp/app.json
+        kubectl -n todo get pods -l 'cnpg.io/cluster=todo-db' -o json > /tmp/db.json
+        for f in /tmp/app.json /tmp/db.json; do
+          missing=$(jq -r '.items[] | select([(.spec.initContainers // [])[], .spec.containers[]] | map(.name) | index("linkerd-proxy") | not) | .metadata.name' $f)
+          [ -z "$missing" ] || fail "pods without linkerd-proxy: $missing"
+        done
+        ok "$(jq '.items|length' /tmp/app.json) app pods and $(jq '.items|length' /tmp/db.json) database pods are meshed"
+
+    - name: App to PostgreSQL traffic is mTLS with the app identity
+      shell: |
+        . /data/lib.sh
+        mkdir -p /data/artifacts
+        api -o /dev/null $APP/api/todos   # make sure there is fresh traffic
+        primary=$(kubectl -n todo get cluster todo-db -o jsonpath='{.status.currentPrimary}')
+        kubectl get --raw "/api/v1/namespaces/todo/pods/$primary:4191/proxy/metrics" > /data/artifacts/primary-proxy-metrics.txt
+        grep -E '^inbound_tcp_authz_allow_total\{' /data/artifacts/primary-proxy-metrics.txt | grep 'srv_name="postgres"' > /tmp/allowed || true
+        cat /tmp/allowed
+        grep 'tls="true"' /tmp/allowed | grep -q 'client_id="todo.todo.serviceaccount.identity.' \
+          || fail "no mTLS-authorized connections from the todo ServiceAccount on $primary:5432"
+        ok "PostgreSQL primary $primary only sees mTLS connections authorized by policy postgres-clients"
+
+    - name: AuthorizationPolicy denies wrong identities and unmeshed clients
+      shell: |
+        . /data/lib.sh
+        mkdir -p /data/artifacts
+        kubectl -n todo create serviceaccount intruder --dry-run=client -o yaml | kubectl apply -f -
+        # probe <name> <serviceAccount> <linkerd.io/inject> <expected phase>
+        probe() {
+          kubectl -n todo delete pod "$1" --ignore-not-found --wait=true >/dev/null
+          kubectl -n todo run "$1" --restart=Never --image=postgres:17.6-alpine --overrides="$(cat <<EOF
+        {"metadata":{"annotations":{"linkerd.io/inject":"$3"}},
+         "spec":{"serviceAccountName":"$2","securityContext":{"runAsNonRoot":true,"runAsUser":70},
+          "containers":[{"name":"$1","image":"postgres:17.6-alpine",
+            "command":["psql","host=todo-db-rw user=todo dbname=todo sslmode=require connect_timeout=10","-tAc","select 1"],
+            "env":[{"name":"PGPASSWORD","valueFrom":{"secretKeyRef":{"name":"todo-db-credentials","key":"password"}}}],
+            "resources":{"limits":{"memory":"64Mi"}}}]}}
+        EOF
+        )" >/dev/null
+          phase=""
+          for _ in $(seq 60); do
+            phase=$(kubectl -n todo get pod "$1" -o jsonpath='{.status.phase}')
+            case "$phase" in Succeeded|Failed) break;; esac; sleep 2
+          done
+          kubectl -n todo logs "$1" -c "$1" > "/data/artifacts/$1.log" 2>&1 || true
+          kubectl -n todo delete pod "$1" --wait=false >/dev/null
+          [ "$phase" = "$4" ] || fail "$1 (sa=$2, inject=$3): expected $4, got ${phase:-timeout}. Log: $(cat /data/artifacts/$1.log)"
+          ok "$1 (sa=$2, inject=$3) -> $phase"
+        }
+        probe probe-app-identity todo enabled Succeeded
+        probe probe-wrong-identity intruder enabled Failed
+        probe probe-unmeshed todo disabled Failed
+
+    - name: Clean up
+      condition: always
+      shell: |
+        kubectl -n todo delete pod probe-app-identity probe-wrong-identity probe-unmeshed --ignore-not-found --wait=false
+        kubectl -n todo delete serviceaccount intruder --ignore-not-found
+      artifacts:
+        paths: ["/data/artifacts/**"]

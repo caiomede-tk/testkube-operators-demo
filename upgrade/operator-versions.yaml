@@ -1,0 +1,17 @@
+# Single source of truth for operator versions (Helm chart versions).
+# Flux substitutes these into infrastructure/ HelmReleases; the TestWorkflows read this
+# ConfigMap to assert that what is running is what Git asked for.
+# Upgrading the operators = changing this file (see `make upgrade`).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: operator-versions
+  namespace: flux-system
+data:
+  CERT_MANAGER_VERSION: v1.21.3          # app v1.21.3
+  LINKERD_VERSION: 2026.10.1             # edge-26.10.1
+  KYVERNO_VERSION: 3.9.2                 # app v1.19.2
+  EXTERNAL_SECRETS_VERSION: 2.14.0       # app v2.14.0
+  VELERO_VERSION: 12.2.1                 # app v1.18.2
+  VELERO_AWS_PLUGIN_VERSION: v1.14.0
+  CNPG_VERSION: 0.29.1                   # app v1.30.1

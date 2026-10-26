@@ -1,0 +1,137 @@
+# Guardrails for application namespaces (label demo.testkube.io/policy=enforced).
+# Operator and Testkube namespaces are deliberately out of scope.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata: {name: disallow-latest-tag}
+spec:
+  background: true
+  rules:
+    - name: require-pinned-tag
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaceSelector: {matchLabels: {demo.testkube.io/policy: enforced}}
+      validate:
+        failureAction: Enforce
+        message: "Images must use a pinned tag (no ':latest', no missing tag)."
+        pattern:
+          spec:
+            containers:
+              - image: "!*:latest & *:*"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata: {name: require-run-as-non-root}
+spec:
+  background: true
+  rules:
+    - name: run-as-non-root
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaceSelector: {matchLabels: {demo.testkube.io/policy: enforced}}
+      validate:
+        failureAction: Enforce
+        message: "Pods must set securityContext.runAsNonRoot=true."
+        anyPattern:
+          - spec:
+              securityContext: {runAsNonRoot: true}
+          - spec:
+              containers:
+                - securityContext: {runAsNonRoot: true}
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata: {name: require-memory-limits}
+spec:
+  background: true
+  rules:
+    - name: memory-limits
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaceSelector: {matchLabels: {demo.testkube.io/policy: enforced}}
+      validate:
+        failureAction: Enforce
+        message: "Every container must set resources.limits.memory."
+        pattern:
+          spec:
+            containers:
+              - resources:
+                  limits:
+                    memory: "?*"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata: {name: require-mesh}
+spec:
+  background: true
+  rules:
+    - name: namespace-must-be-meshed
+      match:
+        any:
+          - resources:
+              kinds: [Namespace]
+              selector: {matchLabels: {demo.testkube.io/policy: enforced}}
+      validate:
+        failureAction: Enforce
+        message: "Application namespaces must be meshed (annotation linkerd.io/inject=enabled)."
+        pattern:
+          metadata:
+            annotations:
+              linkerd.io/inject: enabled
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata: {name: default-seccomp}
+spec:
+  rules:
+    - name: add-runtime-default-seccomp
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaceSelector: {matchLabels: {demo.testkube.io/policy: enforced}}
+      mutate:
+        patchStrategicMerge:
+          spec:
+            securityContext:
+              +(seccompProfile):
+                type: RuntimeDefault
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata: {name: namespace-pod-quota}
+spec:
+  rules:
+    - name: generate-pod-quota
+      match:
+        any:
+          - resources:
+              kinds: [Namespace]
+              selector: {matchLabels: {demo.testkube.io/policy: enforced}}
+      generate:
+        apiVersion: v1
+        kind: ResourceQuota
+        name: pod-quota
+        namespace: "{{request.object.metadata.name}}"
+        synchronize: true
+        data:
+          spec:
+            hard: {pods: "40"}
+---
+# Kyverno needs to be allowed to manage the generated ResourceQuota.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno-generate-resourcequotas
+  labels:
+    rbac.kyverno.io/aggregate-to-background-controller: "true"
+    rbac.kyverno.io/aggregate-to-admission-controller: "true"
+rules:
+  - apiGroups: [""]
+    resources: [resourcequotas]
+    verbs: [get, list, watch, create, update, patch, delete]
