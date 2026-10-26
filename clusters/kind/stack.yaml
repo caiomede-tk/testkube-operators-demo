@@ -6,6 +6,7 @@ metadata:
   namespace: flux-system
 spec:
   interval: 1h
+  retryInterval: 1m
   path: ./infrastructure/sources
   prune: true
   sourceRef: {kind: GitRepository, name: flux-system}
@@ -18,6 +19,7 @@ metadata:
 spec:
   dependsOn: [{name: sources}]
   interval: 10m
+  retryInterval: 1m
   timeout: 15m
   path: ./infrastructure/operators
   prune: true
@@ -34,6 +36,7 @@ metadata:
 spec:
   dependsOn: [{name: operators}]
   interval: 10m
+  retryInterval: 1m
   timeout: 10m
   path: ./infrastructure/configs
   prune: true
@@ -48,6 +51,7 @@ metadata:
 spec:
   dependsOn: [{name: configs}]
   interval: 10m
+  retryInterval: 1m
   timeout: 15m
   path: ./infrastructure/platform
   prune: true
@@ -64,6 +68,7 @@ metadata:
 spec:
   dependsOn: [{name: platform}]
   interval: 5m
+  retryInterval: 1m
   timeout: 10m
   path: ./apps/todo
   prune: true
@@ -78,6 +83,7 @@ metadata:
 spec:
   dependsOn: [{name: sources}]
   interval: 10m
+  retryInterval: 1m
   timeout: 15m
   path: ./testkube/agent
   prune: true
@@ -92,6 +98,7 @@ metadata:
 spec:
   dependsOn: [{name: testkube}]
   interval: 5m
+  retryInterval: 1m
   path: ./testkube/workflows
   prune: true
   sourceRef: {kind: GitRepository, name: flux-system}

@@ -35,10 +35,10 @@ spec:
       shell: |
         . /data/lib.sh
         kubectl -n flux-system get kustomizations | tee /data/artifacts/kustomizations.txt
-        bad=$(kubectl -n flux-system get kustomizations -o json | jq -r '.items[] | select(any(.status.conditions[]?; .type=="Ready" and .status!="True")) | "\(.metadata.name): \(.status.conditions[]|select(.type=="Ready")|.message)"')
-        [ -z "$bad" ] || fail "Kustomizations not Ready:
-        $bad"
-        ok "all Kustomizations Ready"
+        not_ready() { kubectl -n flux-system get kustomizations -o json | jq -r '.items[] | select(any(.status.conditions[]?; .type=="Ready" and .status!="True")) | "\(.metadata.name): \(.status.conditions[]|select(.type=="Ready")|.message)"'; }
+        all_ready() { [ -z "$(not_ready)" ]; }
+        not_ready
+        wait_until 300 "all Kustomizations Ready (install chain settled after the latest commit)" all_ready
 
     - name: Drift on the app is reverted
       shell: |
