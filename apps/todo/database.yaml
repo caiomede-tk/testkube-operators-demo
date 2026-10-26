@@ -16,6 +16,11 @@ spec:
       database: todo
       owner: todo
       secret: {name: todo-db-credentials}
+      # Least privilege: only the app role may connect to its database; the metrics exporter
+      # (pg_monitor) may read the app's tables for the business metrics below.
+      postInitApplicationSQL:
+        - REVOKE CONNECT ON DATABASE todo FROM PUBLIC
+        - ALTER DEFAULT PRIVILEGES FOR ROLE todo IN SCHEMA public GRANT SELECT ON TABLES TO pg_monitor
   managed:
     roles:
       - name: todo
