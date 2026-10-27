@@ -79,7 +79,7 @@ These are good stories for the talk, because each one happened while every opera
 2. **The app.** Run `make app`, then add a few todos. Point out the padlock (cert-manager), the meshed pods (`kubectl -n todo get pods` shows 2/2) and the Kyverno-labelled namespace.
 3. **Green baseline.** Run `make test`. Walk through one workflow log (e.g. `cloudnative-pg`: failover time, zero lost writes).
 4. **The upgrade.** Run `make upgrade`, which opens a PR that changes one file. Merge it, then run `flux reconcile source git flux-system`.
-   Within about 5 minutes, CNPG, External Secrets, Kyverno and the Linkerd CRDs are upgraded. cert-manager is rejected.
+   Within about 5 minutes, CNPG, External Secrets, Kyverno and the Linkerd CRDs are upgraded. cert-manager is rejected ap.
 5. **Act 1: run the same tests again** with `make test`. These results were verified on kind:
 
 | Workflow | Result | Why (real upstream change) |
