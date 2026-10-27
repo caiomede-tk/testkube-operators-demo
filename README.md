@@ -110,7 +110,7 @@ These are good stories for the talk, because each one happened while every opera
 [slides/slides.md](slides/slides.md) is a [Marp](https://marp.app) deck with the Testkube theme ([slides/testkube.css](slides/testkube.css)). Every slide has speaker notes.
 
 ```sh
-make slides-live   # live preview while editing
+make slides-live   # live preview at http://localhost:8080/slides.md
 make slides        # slides/dist/index.html (press p for presenter view) + slides/dist/slides.pdf
 ```
 

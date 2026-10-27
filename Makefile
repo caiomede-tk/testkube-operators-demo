@@ -58,12 +58,13 @@ upgrade: ## Open the "upgrade operators" PR; Flux rolls it out once merged
 kind-down: ## Delete the kind cluster
 	kind delete cluster --name $(CLUSTER)
 
-MARP := npx -y @marp-team/marp-cli@4.5.1 slides/slides.md --theme-set slides/testkube.css --html --allow-local-files --no-stdin
+MARP_CLI := npx -y @marp-team/marp-cli@4.5.1 --theme-set slides/testkube.css --html --allow-local-files --no-stdin
+MARP := $(MARP_CLI) slides/slides.md
 
 slides: ## Build the deck: slides/dist/index.html (presenter mode: press p) and slides/dist/slides.pdf
 	@mkdir -p slides/dist && cp -R slides/assets slides/dist/
 	$(MARP) -o slides/dist/index.html
 	$(MARP) --pdf --pdf-notes -o slides/dist/slides.pdf
 
-slides-live: ## Live preview of the deck while editing
-	$(MARP) --server --watch slides
+slides-live: ## Live preview of the deck while editing: http://localhost:8080/slides.md
+	$(MARP_CLI) --server slides
